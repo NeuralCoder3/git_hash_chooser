@@ -74,6 +74,8 @@ import hashlib
 import os
 import subprocess
 import sys
+import multiprocessing as mp
+
 
 def subprocess_check_output(cmd, **kwargs):
     if hasattr(subprocess, 'check_output'):
@@ -88,12 +90,15 @@ def subprocess_check_output(cmd, **kwargs):
             raise subprocess.CalledProcessError(retcode, cmd)
         return output
 
+
 def load_git_commit(commit_id):
     return subprocess_check_output(['git', 'cat-file', 'commit', commit_id])
+
 
 def git_commit_hash(commit):
     object = 'commit %i\x00%s' % (len(commit), commit)
     return hashlib.sha1(object).hexdigest()
+
 
 def commit_line_to_format(line, aggregate_values):
     format_words = line.replace('%', '%%').split(' ')
@@ -107,19 +112,23 @@ def commit_line_to_format(line, aggregate_values):
         format_words[-2] = '%(committer_date_timestamp)i'
     return ' '.join(format_words)
 
+
 def commit_to_format(commit):
     aggregate_values = {}
     commit_format = '\n'.join(commit_line_to_format(line, aggregate_values)
-                              for line in commit.split('\n'))
+                              for line in str(commit).split('\n'))
     return commit_format, aggregate_values
 
-def find_beautiful_git_hash(old_commit, prefix, max_minutes=30):
+
+def find_beautiful_git_hash(old_commit, prefix, max_minutes=120):
     ALLOWED_PREFIX_CHARACTERS = '0123456789abcdef'
     if prefix.lstrip(ALLOWED_PREFIX_CHARACTERS) != '':
-        raise Exception('Invalid prefix! Only lower case hex digits are allowed: ' + ALLOWED_PREFIX_CHARACTERS)
+        raise Exception(
+            'Invalid prefix! Only lower case hex digits are allowed: ' + ALLOWED_PREFIX_CHARACTERS)
     commit_format, old_values = commit_to_format(old_commit)
-    for committer_date_offset in xrange(max_minutes * 60 + 1):
-        for author_date_offset in xrange(committer_date_offset + 1):
+    bound = max_minutes*60
+    for committer_date_offset in range(bound + 1):
+        for author_date_offset in range(committer_date_offset + 1):
             new_values = {
                 'author_date_timestamp': old_values['author_date_timestamp'] + author_date_offset,
                 'committer_date_timestamp': old_values['committer_date_timestamp'] + committer_date_offset,
@@ -135,14 +144,17 @@ def find_beautiful_git_hash(old_commit, prefix, max_minutes=30):
                     }
     raise Exception('Unable to find beautiful hash!')
 
+
 def proposed_prefix(previous_commit, number_length=4):
     try:
-        output = subprocess_check_output(['git', 'rev-parse', previous_commit], stderr=file(os.devnull))
+        output = subprocess_check_output(
+            ['git', 'rev-parse', previous_commit], stderr=file(os.devnull))
         previous_commit_hash = output.rstrip('\n')
         new_number = int(previous_commit_hash[:number_length], 10) + 1
     except subprocess.CalledProcessError:
         new_number = 1
     return str(new_number).rjust(number_length, '0') + 'a'
+
 
 def show_proposal_for_git_head(prefix=None):
     if prefix is None:
@@ -150,22 +162,24 @@ def show_proposal_for_git_head(prefix=None):
     old_commit = load_git_commit('HEAD')
     values = find_beautiful_git_hash(old_commit, prefix)
     if values is None:
-        print 'Nothing to do'
+        print('Nothing to do')
     else:
-        print 'Proposal:'
-        print "GIT_COMMITTER_DATE='%(committer_date)s' git commit --amend -C HEAD --date='%(author_date)s'" % values
+        print('Proposal:')
+        print("GIT_COMMITTER_DATE='%(committer_date)s' git commit --amend -C HEAD --date='%(author_date)s'" % values)
+
 
 def main():
     try:
         _, prefix = sys.argv
     except:
-        print >>sys.stderr, 'Usage'
-        print >>sys.stderr, '    %s <prefix>|--auto' % (sys.argv[0],)
+        print('Usage')
+        print('    %s <prefix>|--auto' % (sys.argv[0],))
         sys.exit(1)
     if prefix == '--auto':
         show_proposal_for_git_head(None)
     else:
         show_proposal_for_git_head(prefix)
+
 
 if __name__ == '__main__':
     main()
