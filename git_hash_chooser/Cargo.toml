@@ -1,0 +1,12 @@
+[package]
+name = "git_hash_chooser"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hex = "0.4.3"
+kdam = "0.3.0"
+md5 = "0.7.0"
+sha1 = "0.10.5"
