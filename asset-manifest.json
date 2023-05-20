@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/git_hash_chooser/static/css/main.073c9b0a.css",
+    "main.js": "/git_hash_chooser/static/js/main.ce0e366d.js",
+    "static/js/787.506bdf37.chunk.js": "/git_hash_chooser/static/js/787.506bdf37.chunk.js",
+    "index.html": "/git_hash_chooser/index.html",
+    "main.073c9b0a.css.map": "/git_hash_chooser/static/css/main.073c9b0a.css.map",
+    "main.ce0e366d.js.map": "/git_hash_chooser/static/js/main.ce0e366d.js.map",
+    "787.506bdf37.chunk.js.map": "/git_hash_chooser/static/js/787.506bdf37.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.073c9b0a.css",
+    "static/js/main.ce0e366d.js"
+  ]
+}
