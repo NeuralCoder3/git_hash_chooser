@@ -1,8 +1,10 @@
+use clap::Parser;
 use kdam::{tqdm, BarExt};
+use rayon::prelude::*;
 use sha1::Digest;
-use std::env;
 use std::error::Error;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 struct CommitValues {
     author_date_timestamp: i64,
@@ -75,7 +77,8 @@ fn commit_to_format(commit: &str) -> Result<(String, CommitValues), Box<dyn Erro
 fn find_beautiful_git_hash(
     old_commit: &str,
     prefix: &str,
-    max_minutes: usize,
+    min_minutes: i64,
+    max_minutes: i64,
 ) -> Result<Option<(String, String)>, Box<dyn Error>> {
     let allowed_prefix_chars = "0123456789abcdef";
     if !prefix.chars().all(|c| allowed_prefix_chars.contains(c)) {
@@ -83,57 +86,74 @@ fn find_beautiful_git_hash(
     }
     let (commit_format, old_values) = commit_to_format(old_commit)?;
 
-    let bound = max_minutes * 60;
+    let lower_bound = min_minutes * 60;
+    let upper_bound = max_minutes * 60;
+    let bound = upper_bound - lower_bound;
     let possibilities = (bound + 1) * (bound + 2) / 2;
     let hash_count = (allowed_prefix_chars.len() as u64).pow(prefix.len() as u32);
     let probability = possibilities as f64 / hash_count as f64;
     println!(
-        "Searching for a hash starting with {} (1:{}) in {} commits (probability: {:.2}%)",
+        "Searching for a hash starting with {} (1:{}) in {} commits (probability: {:.2}% <{:.2} times>)",
         prefix,
         hash_count,
         possibilities,
-        100.0 * probability
+        100.0 * f64::min(probability, 0.9999),
+        probability
     );
 
-    let mut bar = tqdm!(total = possibilities as usize);
+    let realistic_possibilities = u64::min(
+        possibilities as u64,
+        (possibilities as f64 / probability) as u64,
+    );
+    let bar = tqdm!(total = realistic_possibilities as usize);
+    let shared_bar = Arc::new(Mutex::new(bar));
 
-    for committer_date_offset in 0..=bound {
-        for author_date_offset in 0..=committer_date_offset {
-            bar.update(1);
-            let new_values = CommitValues {
-                author_date_timestamp: old_values.author_date_timestamp + author_date_offset as i64,
-                author_date_tz: old_values.author_date_tz.clone(),
-                committer_date_timestamp: old_values.committer_date_timestamp
-                    + committer_date_offset as i64,
-                committer_date_tz: old_values.committer_date_tz.clone(),
-            };
-            let commit = commit_format
-                .replace(
-                    "%(author_date_timestamp)i",
-                    &new_values.author_date_timestamp.to_string(),
-                )
-                .replace(
-                    "%(committer_date_timestamp)i",
-                    &new_values.committer_date_timestamp.to_string(),
-                );
-            if git_commit_hash(&commit).starts_with(prefix) {
-                if author_date_offset == 0 && committer_date_offset == 0 {
-                    return Ok(None);
-                } else {
-                    let committer_date = format!(
-                        "{} {}",
-                        new_values.committer_date_timestamp, new_values.committer_date_tz
+    let committer_date_offsets: Vec<i64> = (lower_bound..=upper_bound).collect();
+    let result = committer_date_offsets
+        .par_iter()
+        .find_map_any(|&committer_date_offset| {
+            let iter_count = committer_date_offset - lower_bound + 1;
+            for author_date_offset in lower_bound..=committer_date_offset {
+                // bar.update(1);
+                let new_values = CommitValues {
+                    author_date_timestamp: old_values.author_date_timestamp
+                        + author_date_offset as i64,
+                    author_date_tz: old_values.author_date_tz.clone(),
+                    committer_date_timestamp: old_values.committer_date_timestamp
+                        + committer_date_offset as i64,
+                    committer_date_tz: old_values.committer_date_tz.clone(),
+                };
+                let commit = commit_format
+                    .replace(
+                        "%(author_date_timestamp)i",
+                        &new_values.author_date_timestamp.to_string(),
+                    )
+                    .replace(
+                        "%(committer_date_timestamp)i",
+                        &new_values.committer_date_timestamp.to_string(),
                     );
-                    let author_date = format!(
-                        "{} {}",
-                        new_values.author_date_timestamp, new_values.author_date_tz
-                    );
-                    return Ok(Some((committer_date, author_date)));
+                if git_commit_hash(&commit).starts_with(prefix) {
+                    if author_date_offset == 0 && committer_date_offset == 0 {
+                        return Some(None);
+                    } else {
+                        let committer_date = format!(
+                            "{} {}",
+                            new_values.committer_date_timestamp, new_values.committer_date_tz
+                        );
+                        let author_date = format!(
+                            "{} {}",
+                            new_values.author_date_timestamp, new_values.author_date_tz
+                        );
+                        return Some(Some((committer_date, author_date)));
+                    }
                 }
             }
-        }
+            shared_bar.lock().unwrap().update(iter_count as usize);
+            None
+        });
+    if let Some(result) = result {
+        return Ok(result);
     }
-    eprint!("\n");
 
     Err("Unable to find beautiful hash!".into())
 }
@@ -149,10 +169,17 @@ fn proposed_prefix(previous_commit: &str, number_length: usize) -> String {
     format!("{:0>width$}a", new_number, width = number_length)
 }
 
-fn show_proposal_for_git_head(prefix: Option<String>) -> Result<(), Box<dyn Error>> {
+fn show_proposal_for_git_head(
+    prefix: Option<String>,
+    min_minutes: i64,
+    max_minutes: i64,
+) -> Result<(), Box<dyn Error>> {
     let prefix = prefix.unwrap_or_else(|| proposed_prefix("HEAD^", 4));
     let old_commit = load_git_commit("HEAD")?;
-    let values = find_beautiful_git_hash(&old_commit, &prefix, 300)?;
+    let values = find_beautiful_git_hash(&old_commit, &prefix, min_minutes, max_minutes)?;
+    //let values = find_beautiful_git_hash(&old_commit, &prefix, -900, 600)?;
+    //let values = find_beautiful_git_hash(&old_commit, &prefix, -2000, -900)?;
+    // let values = find_beautiful_git_hash(&old_commit, &prefix, -4000, -2000)?;
 
     if let Some((committer_date, author_date)) = values {
         println!("Proposal:");
@@ -167,18 +194,24 @@ fn show_proposal_for_git_head(prefix: Option<String>) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Prefix to use for the hash
+    #[arg(short, long)]
+    prefix: String,
+
+    /// Minimum number of minutes to add to the commit date
+    #[arg(short, long, default_value_t = 0)]
+    min: u32,
+
+    /// Maximum number of minutes to add to the commit date
+    #[arg(short = 'M', long, default_value_t = 300)]
+    max: u32,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let args: Vec<String> = env::args().collect();
-
-    match args.get(1).map(String::as_str) {
-        Some("--auto") => show_proposal_for_git_head(None)?,
-        Some(prefix) => show_proposal_for_git_head(Some(prefix.to_string()))?,
-        _ => {
-            println!("Usage");
-            println!("    {} <prefix>|--auto", args[0]);
-            std::process::exit(1);
-        }
-    }
-
+    let args = Args::parse();
+    show_proposal_for_git_head(Some(args.prefix), args.min as i64, args.max as i64)?;
     Ok(())
 }
