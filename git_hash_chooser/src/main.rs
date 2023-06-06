@@ -175,6 +175,9 @@ fn show_proposal_for_git_head(
     max_minutes: i64,
 ) -> Result<(), Box<dyn Error>> {
     let prefix = prefix.unwrap_or_else(|| proposed_prefix("HEAD^", 4));
+
+    println!("Searching for a hash starting with {} in the last {} minutes or the next {} minutes", prefix, -min_minutes, max_minutes);
+
     let old_commit = load_git_commit("HEAD")?;
     let values = find_beautiful_git_hash(&old_commit, &prefix, min_minutes, max_minutes)?;
     //let values = find_beautiful_git_hash(&old_commit, &prefix, -900, 600)?;
@@ -202,16 +205,19 @@ struct Args {
     prefix: String,
 
     /// Minimum number of minutes to add to the commit date
-    #[arg(short, long, default_value_t = 0)]
-    min: u32,
+    #[arg(short, long, default_value_t = -300, allow_hyphen_values = true)]
+    min: i32,
 
     /// Maximum number of minutes to add to the commit date
     #[arg(short = 'M', long, default_value_t = 300)]
-    max: u32,
+    max: i32,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
+    if args.min > args.max {
+        return Err("min must be smaller than max".into());
+    }
     show_proposal_for_git_head(Some(args.prefix), args.min as i64, args.max as i64)?;
     Ok(())
 }
